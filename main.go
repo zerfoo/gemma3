@@ -6,25 +6,18 @@ import (
 	"log"
 
 	"github.com/zerfoo/zerfoo/compute"
+	"github.com/zerfoo/zerfoo/layers/registry"
 	"github.com/zerfoo/zerfoo/model"
 	"github.com/zerfoo/zerfoo/numeric"
 	"github.com/zerfoo/zerfoo/pkg/tokenizer"
 	"github.com/zerfoo/zerfoo/tensor"
-
-	_ "github.com/zerfoo/zerfoo/layers/activations" // Register activation layers
-	_ "github.com/zerfoo/zerfoo/layers/attention"    // Register attention layers
-	_ "github.com/zerfoo/zerfoo/layers/components"   // Register component layers
-	_ "github.com/zerfoo/zerfoo/layers/core"         // Register core layers (e.g., Shape, Reshape)
-	_ "github.com/zerfoo/zerfoo/layers/embeddings"   // Register embedding layers
-	_ "github.com/zerfoo/zerfoo/layers/gather"       // Register gather layers
-	_ "github.com/zerfoo/zerfoo/layers/normalization" // Register normalization layers
-	_ "github.com/zerfoo/zerfoo/layers/reducesum"    // Register reducesum layers
-	_ "github.com/zerfoo/zerfoo/layers/transformer"  // Register transformer layers
-	_ "github.com/zerfoo/zerfoo/layers/transpose"    // Register transpose layers
 )
 
 func main() {
 	fmt.Println("Running Gemma 3 example...")
+
+	// Initialize layer registry
+	registry.RegisterAll()
 
 	// 1. Load the ZMF model
 	zmfModel, err := model.LoadZMF("gemma3/data/model.zmf")
