@@ -19,8 +19,8 @@ func main() {
 	// Initialize layer registry
 	registry.RegisterAll()
 
-	// 1. Load the ZMF model
-	zmfModel, err := model.LoadZMF("gemma3/data/model.zmf")
+	// 1. Load the ZMF model with full weights
+	zmfModel, err := model.LoadZMF("gemma3/data/model_with_weights.zmf")
 	if err != nil {
 		log.Fatalf("Failed to load ZMF model: %v", err)
 	}
