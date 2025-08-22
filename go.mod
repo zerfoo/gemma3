@@ -2,9 +2,7 @@ module github.com/zerfoo/gemma
 
 go 1.25
 
-replace github.com/zerfoo/zerfoo => ../zerfoo
-
-require github.com/zerfoo/zerfoo v0.0.0
+require github.com/zerfoo/zerfoo v0.2.0
 
 require (
 	github.com/zerfoo/float16 v0.1.0 // indirect

@@ -5,26 +5,37 @@ import (
 	"fmt"
 	"log"
 
+	"github.com/zerfoo/zerfoo/compute"
 	"github.com/zerfoo/zerfoo/model"
-	"github.com/zerfoo/zerfoo/compute/cpu"
 	"github.com/zerfoo/zerfoo/numeric"
 	"github.com/zerfoo/zerfoo/pkg/tokenizer"
 	"github.com/zerfoo/zerfoo/tensor"
+
+	_ "github.com/zerfoo/zerfoo/layers/activations" // Register activation layers
+	_ "github.com/zerfoo/zerfoo/layers/attention"    // Register attention layers
+	_ "github.com/zerfoo/zerfoo/layers/components"   // Register component layers
+	_ "github.com/zerfoo/zerfoo/layers/core"         // Register core layers (e.g., Shape, Reshape)
+	_ "github.com/zerfoo/zerfoo/layers/embeddings"   // Register embedding layers
+	_ "github.com/zerfoo/zerfoo/layers/gather"       // Register gather layers
+	_ "github.com/zerfoo/zerfoo/layers/normalization" // Register normalization layers
+	_ "github.com/zerfoo/zerfoo/layers/reducesum"    // Register reducesum layers
+	_ "github.com/zerfoo/zerfoo/layers/transformer"  // Register transformer layers
+	_ "github.com/zerfoo/zerfoo/layers/transpose"    // Register transpose layers
 )
 
 func main() {
 	fmt.Println("Running Gemma 3 example...")
 
 	// 1. Load the ZMF model
-	zmfModel, err := model.LoadZMF("data/model.zmf")
+	zmfModel, err := model.LoadZMF("gemma3/data/model.zmf")
 	if err != nil {
 		log.Fatalf("Failed to load ZMF model: %v", err)
 	}
 	fmt.Printf("Successfully loaded ZMF model with %d nodes.\n", len(zmfModel.Graph.Nodes))
 
 	// 2. Instantiate the zerfoo model from the ZMF graph
-	engine := cpu.NewEngine[float32]()
-	ops := numeric.NewFloat32Ops()
+	ops := numeric.Float32Ops{}
+	engine := compute.NewCPUEngine[float32](ops)
 	zerfooGraph, err := model.BuildFromZMF[float32](engine, ops, zmfModel)
 	if err != nil {
 		log.Fatalf("Failed to build zerfoo graph from ZMF: %v", err)
@@ -47,21 +58,72 @@ func main() {
 	tokenIDs := tok.Encode(prompt)
 	fmt.Printf("Encoded prompt '%s' -> %v\n", prompt, tokenIDs)
 
-	// 5. Create input tensor
-	// The model expects a 2D tensor of shape [batch_size, sequence_length]
+	// 5. Create input tensors
+	// The model expects multiple inputs: input_ids, attention_mask, position_ids, and past_key_values
+	batchSize := 1
+	seqLen := len(tokenIDs)
+	
+	// input_ids: [batch_size, sequence_length]
 	inputData := make([]float32, len(tokenIDs))
 	for i, id := range tokenIDs {
 		inputData[i] = float32(id)
 	}
-	inputTensor, err := tensor.NewTensor(inputData, []int{1, len(tokenIDs)})
+	inputTensor, err := tensor.New[float32]([]int{batchSize, seqLen}, inputData)
 	if err != nil {
 		log.Fatalf("Failed to create input tensor: %v", err)
 	}
 
+	// attention_mask: [batch_size, sequence_length] - all 1s for no masking
+	attentionMaskData := make([]float32, seqLen)
+	for i := range attentionMaskData {
+		attentionMaskData[i] = 1.0
+	}
+	attentionMask, err := tensor.New[float32]([]int{batchSize, seqLen}, attentionMaskData)
+	if err != nil {
+		log.Fatalf("Failed to create attention mask: %v", err)
+	}
+
+	// position_ids: [batch_size, sequence_length] - sequential positions
+	positionData := make([]float32, seqLen)
+	for i := range positionData {
+		positionData[i] = float32(i)
+	}
+	positionIds, err := tensor.New[float32]([]int{batchSize, seqLen}, positionData)
+	if err != nil {
+		log.Fatalf("Failed to create position ids: %v", err)
+	}
+
+	// past_key_values: empty tensors for initial inference (26 layers * 2 = 52 tensors)
+	// Each layer has key and value tensors of shape [batch_size, num_heads, 0, head_dim]
+	// For Gemma-3, 26 layers (0-25), 24 heads, head_dim = 128
+	numLayers := 26
+	numHeads := 24
+	headDim := 128
+	
+	var allInputs []*tensor.TensorNumeric[float32]
+	allInputs = append(allInputs, inputTensor, attentionMask, positionIds)
+	
+	// Add empty past key-value tensors for each layer
+	for layer := 0; layer < numLayers; layer++ {
+		// Empty key tensor: [batch_size, num_heads, 0, head_dim]
+		emptyKey, err := tensor.New[float32]([]int{batchSize, numHeads, 0, headDim}, []float32{})
+		if err != nil {
+			log.Fatalf("Failed to create empty key tensor for layer %d: %v", layer, err)
+		}
+		
+		// Empty value tensor: [batch_size, num_heads, 0, head_dim]  
+		emptyValue, err := tensor.New[float32]([]int{batchSize, numHeads, 0, headDim}, []float32{})
+		if err != nil {
+			log.Fatalf("Failed to create empty value tensor for layer %d: %v", layer, err)
+		}
+		
+		allInputs = append(allInputs, emptyKey, emptyValue)
+	}
+
 	// 6. Run forward pass
-	fmt.Println("Running forward pass...")
+	fmt.Printf("Running forward pass with %d inputs...\n", len(allInputs))
 	ctx := context.Background()
-	outputTensor, err := zerfooGraph.Forward(ctx, inputTensor)
+	outputTensor, err := zerfooGraph.Forward(ctx, allInputs...)
 	if err != nil {
 		log.Fatalf("Forward pass failed: %v", err)
 	}
@@ -74,10 +136,10 @@ func main() {
 	outputShape := outputTensor.Shape()
 	outputData := outputTensor.Data()
 	vocabSize := outputShape[2]
-	seqLen := outputShape[1]
+	outputSeqLen := outputShape[1]
 
-	outputTokenIDs := make([]int, seqLen)
-	for i := 0; i < seqLen; i++ {
+	outputTokenIDs := make([]int, outputSeqLen)
+	for i := 0; i < outputSeqLen; i++ {
 		maxLogit := float32(-1e9)
 		maxIndex := 0
 		for j := 0; j < vocabSize; j++ {
